@@ -27,8 +27,7 @@ import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
-
-import frc.robot.commands.AlignToAprilTag;
+import frc.robot.commands.ApproachTag30Command;
 import frc.robot.commands.BlockShoot;
 import frc.robot.commands.Eject;
 import frc.robot.commands.IndexEject;
@@ -46,7 +45,7 @@ public class RobotContainer {
     private double MaxAngularRate = RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
     /* Setting up bindings for necessary control of the swerve drive platform */
-    private final SwerveRequest.RobotCentric drive = new SwerveRequest.RobotCentric()
+    private final SwerveRequest.FieldCentric drive = new SwerveRequest.FieldCentric()
             .withDeadband(MaxSpeed * 0.1).withRotationalDeadband(MaxAngularRate * 0.1) // Add a 10% deadband
             .withDriveRequestType(DriveRequestType.OpenLoopVoltage); // Use open-loop control for drive motors
     private final SwerveRequest.SwerveDriveBrake brake = new SwerveRequest.SwerveDriveBrake();    private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
@@ -57,7 +56,7 @@ public class RobotContainer {
     private final CommandXboxController operatorController = new CommandXboxController(OPERATOR_CONTROLLER_PORT);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
-    private final VisionSubsystem visionSubsystem = new VisionSubsystem(drivetrain);
+    // private final VisionSubsystem visionSubsystem = new VisionSubsystem(drivetrain, "limelight-front");
 
     private final SendableChooser<Command> autoChooser;
 
@@ -84,7 +83,7 @@ public class RobotContainer {
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
                 drive.withVelocityX(-driveController.getLeftY() * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-driveController.getLeftX() * MaxSpeed) // Drive left with negative X (le_ft)
+                    .withVelocityY(-driveController.getLeftX() * MaxSpeed) // Drive left with negative X (left)
                     .withRotationalRate(-driveController.getRightX() * MaxAngularRate) // Drive counterclockwise with negative X (left)
             )
         );
@@ -112,14 +111,9 @@ public class RobotContainer {
 
         // Reset the field-centric heading on left bumper press.
         driveController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
-        driveController.rightBumper().whileTrue(
-            new AlignToAprilTag(
-                drivetrain,
-                visionSubsystem,
-                driveController::getLeftY,
-                MaxSpeed
-            )
-        );
+
+        // driveController.rightBumper().whileTrue(
+        // new ApproachTag30Command(drivetrain, visionSubsystem));
 
         drivetrain.registerTelemetry(logger::telemeterize);
         // Operator Controls

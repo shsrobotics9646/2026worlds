@@ -1,138 +1,61 @@
 package frc.robot.subsystems;
 
-import static frc.robot.Constants.VisionConstants.ALIGN_DESIRED_LATERAL_OFFSET_METERS;
-import static frc.robot.Constants.VisionConstants.ALIGN_HEADING_TOLERANCE_DEGREES;
-import static frc.robot.Constants.VisionConstants.ALIGN_LATERAL_TOLERANCE_METERS;
-import static frc.robot.Constants.VisionConstants.APRILTAG_PIPELINE;
-import static frc.robot.Constants.VisionConstants.LIMELIGHT_NAME;
-import static frc.robot.Constants.VisionConstants.MAX_VISION_TAG_AMBIGUITY;
-import static frc.robot.Constants.VisionConstants.MAX_VISION_ANGULAR_RATE_DEGREES_PER_SECOND;
-import static frc.robot.Constants.VisionConstants.MAX_VISION_AVG_TAG_DISTANCE_METERS;
-import static frc.robot.Constants.VisionConstants.VALID_TAG_IDS;
-
-import java.util.OptionalInt;
-
-import edu.wpi.first.math.MathUtil;
-import edu.wpi.first.math.VecBuilder;
-import edu.wpi.first.math.geometry.Pose3d;
-import edu.wpi.first.math.util.Units;
-import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.LimelightHelpers;
-import frc.robot.LimelightHelpers.PoseEstimate;
-import frc.robot.LimelightHelpers.RawFiducial;
 
 public class VisionSubsystem extends SubsystemBase {
     private final CommandSwerveDrivetrain drivetrain;
+    private final Timer timer = new Timer();
+    private double lastTimeTargetSeen = 0.0;
+    private final String limelightName;
+    private String sdKey;
 
-    public VisionSubsystem(CommandSwerveDrivetrain drivetrain) {
+    private boolean seesTag30 = false;
+    private double tag30DistanceMeters = -1.0;
+
+    public VisionSubsystem(CommandSwerveDrivetrain drivetrain, String limelightName) {
         this.drivetrain = drivetrain;
-
-        LimelightHelpers.setPipelineIndex(LIMELIGHT_NAME, APRILTAG_PIPELINE);
-        if (VALID_TAG_IDS.length > 0) {
-            LimelightHelpers.SetFiducialIDFiltersOverride(LIMELIGHT_NAME, VALID_TAG_IDS);
-        }
+        this.limelightName = limelightName;
+        timer.start();
+        this.sdKey = "VisionDebug/LastSeen";
+        SmartDashboard.putNumber(this.sdKey, -1);
     }
 
     @Override
     public void periodic() {
-        publishTelemetry();
-        addVisionMeasurement();
-    }
+        LimelightHelpers.PoseEstimate est = LimelightHelpers.getBotPoseEstimate_wpiBlue(limelightName);
+        // if (est != null && est.tagCount > 0) {
+        //     System.out.println("X,Y,Heading=" + est.pose.getX() + "," + est.pose.getY() + "," + est.pose.getRotation().getDegrees());
+        // }
+        // if (LimelightHelpers.getTV(limelightName)) {
+        //     lastTimeTargetSeen = timer.get();
+        // }
+        // SmartDashboard.putNumber(this.sdKey, lastTimeTargetSeen);
 
-    public boolean hasTarget() {
-        return LimelightHelpers.getTV(LIMELIGHT_NAME);
-    }
+        seesTag30 = false;
+        tag30DistanceMeters = -1.0;
 
-    public double getTx() {
-        return LimelightHelpers.getTX(LIMELIGHT_NAME);
-    }
-
-    public double getLateralOffsetMeters() {
-        Pose3d targetPose = LimelightHelpers.getTargetPose3d_RobotSpace(LIMELIGHT_NAME);
-        return targetPose.getY();
-    }
-
-    public OptionalInt getBestTagId() {
-        double fiducialId = LimelightHelpers.getFiducialID(LIMELIGHT_NAME);
-        if (fiducialId < 0) {
-            return OptionalInt.empty();
+        if (LimelightHelpers.getTV(limelightName)) {
+            LimelightHelpers.RawFiducial[] fiducials = LimelightHelpers.getRawFiducials(limelightName);
+            for (LimelightHelpers.RawFiducial fiducial : fiducials) {
+                if (fiducial.id == 30) {
+                    seesTag30 = true;
+                    tag30DistanceMeters = fiducial.distToCamera;
+                    break;
+                }
+            }
         }
-
-        return OptionalInt.of((int) fiducialId);
+        // System.out.println("VisionSubsystem seesTag30=" + seesTag30 + ", tag30DistanceMeters=" + tag30DistanceMeters);
     }
 
-    public boolean isAligned() {
-        if (!hasTarget()) {
-            return false;
-        }
-
-        return Math.abs(getLateralOffsetMeters() - ALIGN_DESIRED_LATERAL_OFFSET_METERS) <= ALIGN_LATERAL_TOLERANCE_METERS
-            && Math.abs(getTx()) <= ALIGN_HEADING_TOLERANCE_DEGREES;
+    public boolean seesTag30() {
+        return seesTag30;
     }
 
-    private void addVisionMeasurement() {
-        double yawDegrees = drivetrain.getState().Pose.getRotation().getDegrees();
-        double yawRateDegreesPerSecond = Units.radiansToDegrees(drivetrain.getState().Speeds.omegaRadiansPerSecond);
-
-        LimelightHelpers.SetRobotOrientation(
-            LIMELIGHT_NAME,
-            yawDegrees,
-            yawRateDegreesPerSecond,
-            0,
-            0,
-            0,
-            0
-        );
-
-        PoseEstimate poseEstimate = DriverStation.getAlliance().orElse(Alliance.Blue) == Alliance.Red
-            ? LimelightHelpers.getBotPoseEstimate_wpiRed_MegaTag2(LIMELIGHT_NAME)
-            : LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2(LIMELIGHT_NAME);
-
-        if (!shouldUseMeasurement(poseEstimate, yawRateDegreesPerSecond)) {
-            return;
-        }
-
-        double xyStdDev = poseEstimate.tagCount >= 2 ? 0.3 : 0.7;
-        double thetaStdDev = poseEstimate.tagCount >= 2 ? 0.6 : 999999.0;
-
-        drivetrain.addVisionMeasurement(
-            poseEstimate.pose,
-            poseEstimate.timestampSeconds,
-            VecBuilder.fill(xyStdDev, xyStdDev, thetaStdDev)
-        );
-    }
-
-    private boolean shouldUseMeasurement(PoseEstimate poseEstimate, double yawRateDegreesPerSecond) {
-        if (!hasTarget() || poseEstimate.tagCount <= 0) {
-            return false;
-        }
-
-        if (Math.abs(yawRateDegreesPerSecond) > MAX_VISION_ANGULAR_RATE_DEGREES_PER_SECOND) {
-            return false;
-        }
-
-        if (poseEstimate.avgTagDist > MAX_VISION_AVG_TAG_DISTANCE_METERS) {
-            return false;
-        }
-
-        RawFiducial[] fiducials = poseEstimate.rawFiducials;
-        if (fiducials.length == 1 && fiducials[0].ambiguity > MAX_VISION_TAG_AMBIGUITY) {
-            return false;
-        }
-
-        return !MathUtil.isNear(0.0, poseEstimate.pose.getX(), 0.001)
-            || !MathUtil.isNear(0.0, poseEstimate.pose.getY(), 0.001);
-    }
-
-    private void publishTelemetry() {
-        SmartDashboard.putBoolean("Vision/HasTarget", hasTarget());
-        SmartDashboard.putNumber("Vision/Tx", getTx());
-        SmartDashboard.putNumber("Vision/LateralOffsetMeters", getLateralOffsetMeters());
-        SmartDashboard.putNumber("Vision/TargetCount", LimelightHelpers.getTargetCount(LIMELIGHT_NAME));
-        SmartDashboard.putBoolean("Vision/Aligned", isAligned());
-        SmartDashboard.putNumber("Vision/BestTagId", getBestTagId().orElse(-1));
+    public double getTag30DistanceMeters() {
+        return tag30DistanceMeters;
     }
 }
